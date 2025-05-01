@@ -1,0 +1,3 @@
+venv
+db
+.mypy_cache
