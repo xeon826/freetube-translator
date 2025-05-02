@@ -2,9 +2,8 @@ import requests
 import json
 import argparse
 import yaml
-import os
 from pathlib import Path
-import time  # Added for rate limiting
+import time
 
 url = "http://localhost:5000/translate"
 payload = {
@@ -50,7 +49,12 @@ def translate_text(text, target_lang):
     
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        # If we get a 400 response, the language is likely not supported
+        if response.status_code == 400:
+            raise UnsupportedLanguageError(f"Language '{target_lang}' is not supported by the translation API")
+            
+        response.raise_for_status()  # Raise an exception for other bad status codes
         result = response.json()
         translated_text = result.get('translatedText')
         
@@ -61,6 +65,8 @@ def translate_text(text, target_lang):
         print(f"Translated '{text}' → '{translated_text}'")  # Debug output
         return translated_text
         
+    except UnsupportedLanguageError as e:
+        raise  # Re-raise this specific error to handle it in the calling function
     except Exception as e:
         print(f"Translation error for text '{text}': {str(e)}")
         return text
@@ -106,6 +112,10 @@ def merge_dicts(original, updates):
         else:
             original[key] = value
 
+class UnsupportedLanguageError(Exception):
+    """Raised when a language is not supported by the translation API."""
+    pass
+
 def main():
     parser = argparse.ArgumentParser(description='Sync translations with en-US.yaml and translate missing keys')
     parser.add_argument('folder_path', help='Path to the folder containing YAML translation files')
@@ -142,19 +152,28 @@ def main():
             if args.debug:
                 print(json.dumps(missing_keys, indent=2))
             
-            # Translate missing keys
-            translated_keys = update_dict_with_translations(missing_keys, lang_code)
-            
-            if args.debug:
-                print("\nTranslated keys:")
-                print(json.dumps(translated_keys, indent=2))
-            
-            # Merge translations into original file
-            merge_dicts(target_data, translated_keys)
-            
-            # Save updated file
-            save_yaml(file_path, target_data)
-            print(f"Updated {lang_code} with translated missing keys")
+            try:
+                # Try to translate a test string to check if the language is supported
+                translate_text("test", lang_code)
+                
+                # If we get here, the language is supported, proceed with translations
+                translated_keys = update_dict_with_translations(missing_keys, lang_code)
+                
+                if args.debug:
+                    print("\nTranslated keys:")
+                    print(json.dumps(translated_keys, indent=2))
+                
+                # Merge translations into original file
+                merge_dicts(target_data, translated_keys)
+                
+                # Save updated file
+                save_yaml(file_path, target_data)
+                print(f"Updated {lang_code} with translated missing keys")
+                
+            except UnsupportedLanguageError as e:
+                print(f"Skipping {lang_code}: {str(e)}")
+                continue
+                
         else:
             print(f"No missing keys found in {lang_code}")
 
